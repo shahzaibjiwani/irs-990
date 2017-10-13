@@ -1,6 +1,14 @@
 ---
 title: "Importing WaPo Dataset on Nonprofits with Disclosed Material Mistatements or Diversions"
 output: html_notebook
+params:
+  filingyear:
+    label: "990 Filing Year"
+    value: 2011
+    input: slider
+    min: 2011
+    max: 2015
+    step: 1
 ---
 
 ```{r include=FALSE}
@@ -40,5 +48,43 @@ WaPo_subset <- subset(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990,
 diversionsonly_2011 <- merge(WaPo_subset, 
                              irs2011, 
                              by = "TAXPAYER_NAME")
+```
+
+The code above starts us on the right direction, but let's update the "hard coded" filing year to something  parameterized. Referencing the video tutorial at https://www.rstudio.com/resources/webinars/beyond-static-reports-with-r-markdown/. 
+
+Note: This code will only work if each of the IRS XML files have an identical (or nearly identical) return type. We will hardcode the return type to "990", but other possible options are 990EO, 990EZ, and 990O.
+  Note: If you change the return type, you will also need to change the XML path in the for-loop.
+
+```{r}
+
+library(readr)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <- read_csv("~/Box Sync/Harvard University/Forensic Accounting and Fraud Examination/Research Paper/WaPo Dataset on Material Diversions Disclosed in 990.csv",
+                                                                 col_types = cols(`Revenue ` = col_number()))
+
+# Force WaPo df to uppercase text only (in order to merge later)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <-
+  mutate_all(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990, funs(toupper))
+
+# Rename Organization column in WaPo dataset to match the IRS index files (also required to merge).
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)
+names(irs2011)
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)[1] <- names(irs2011)[6]
+
+# Subset WaPo for filing year
+WaPo_subset <- subset(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990,
+                      WaPo_Dataset_on_Material_Diversions_Disclosed_in_990$`Tax Year ` == params$filingyear)
+
+# Subset IRS for return type
+irs2011_subset <- subset(irs2011, 
+                         irs2011$RETURN_TYPE == "990")
+
+diversionsonly_2011 <- merge(WaPo_subset, 
+                             irs2011_subset, 
+                             by = "TAXPAYER_NAME")
+
+# Remove duplicate URLs
+diversionsonly_2011 <- 
+  diversionsonly_2011 %>%
+  distinct(URL)
 ```
 
