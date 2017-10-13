@@ -1,0 +1,238 @@
+---
+title: "Explore IRS 990 Filing Data for Organizations with Disclosed Material Mistatements or Diversions"
+output: html_notebook
+params:
+  filingyear:
+    label: "990 Filing Year"
+    value: 2011
+    input: slider
+    min: 2011
+    max: 2015
+    step: 1
+---
+
+```{r include=FALSE}
+# Begin by loading the required packages.
+library(plyr)
+library(dplyr)
+library(rvest)
+library(RCurl)
+library(XML)
+```
+
+Begin by loading the required packages.
+
+The IRS recently published non-profit 990 submission data for 2011-2015. We will begin by drafing a script to download the following:
+
+1. The index file for each year that the IRS published the underlying 990 submission data. There is a unique index file for each year.
+
+```{r include=FALSE}
+irs2015 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2015.csv")
+irs2014 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2014.csv")
+irs2013 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2013.csv")
+irs2012 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2012.csv")
+irs2011 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2011.csv")
+```
+
+The 990 filing at a particular organization for a given year is available online (through AWS) as an XML file. This file can be downloaded by the public and only requires knowledge of the URL structure and the non-profit organization's unique filing identifier. The URL structure is published online (), and the unique identifier can be extracted from the index file. 
+
+Let's create two new columns within each index file. The first will contain the unique identifier, and the second will contain the URL for each organization's 990 filing for that year.
+
+```{r include=FALSE}
+irs2011$identifier <- paste0(
+  substr(irs2011$OBJECT_ID, 1, 15),
+  substr(irs2011$DLN, 11, 13)
+)
+
+irs2011$URL <- paste0("http://s3.amazonaws.com/irs-form-990/", irs2011$identifier, "_public.xml")
+```
+
+Let's begin by downloading the XML files for only the top 3 organizations in the 2011 index.
+
+Note: We want to save each of the XML files as a dataframe in order to view/edit/analyze them later. 
+
+```{r}
+
+threepre <- irs2011$URL[3] %>%
+      xmlParse() %>%
+      xmlToList()
+threepost <- data.frame(threepre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                threepre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                threepre$ReturnData$IRS990$GrossReceipts)
+names(threepost)[1] <- "MaterialDiversionOrMisuse"
+names(threepost)[2] <- "NameOfPrincipalOfficerPerson"
+names(threepost)[3] <- "GrossReceipts"
+
+onepre <- irs2011$URL[1] %>%
+      xmlParse() %>%
+      xmlToList()
+onepost <- data.frame(onepre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                onepre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                onepre$ReturnData$IRS990$GrossReceipts)
+names(onepost)[1] <- "MaterialDiversionOrMisuse"
+names(onepost)[2] <- "NameOfPrincipalOfficerPerson"
+names(onepost)[3] <- "GrossReceipts"
+
+twopre <- irs2011$URL[2] %>%
+      xmlParse() %>%
+      xmlToList()
+twopost <- data.frame(twopre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                twopre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                twopre$ReturnData$IRS990$GrossReceipts)
+names(twopost)[1] <- "MaterialDiversionOrMisuse"
+names(twopost)[2] <- "NameOfPrincipalOfficerPerson"
+names(twopost)[3] <- "GrossReceipts"
+
+combined <- rbind.fill(onepost, twopost, threepost)
+```
+
+This code works, but its not the most efficient. Let's try to use a for-loop instead of writing each version of code by hand.
+
+```{r}
+
+# n <- lengths(irs2011)[11]
+n <- 3
+
+for(i in 1:n){
+  temp <-
+    irs2011$URL[i] %>% 
+    xmlParse() %>%
+    xmlToList()
+  assign(paste("url", i, sep = '_'), 
+    data.frame(temp$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+               temp$ReturnData$IRS990$GrossReceipts))
+}
+
+combined <- do.call(rbind.fill, lapply( paste0("url_", 1:4), get))
+
+```
+
+Perfect. The combined output is as intended. Now, let's expand the dataset to include the first 100 observations to estimate the total time required for the entire project.
+
+```{r}
+
+# n <- lengths(irs2011)[11]
+n <- 100
+
+# Start the clock
+ptm <- proc.time()
+
+for(i in 1:n){
+  temp <-
+    irs2011$URL[i] %>% 
+    xmlParse() %>%
+    xmlToList()
+  assign(paste("url", i, sep = '_'), 
+    data.frame(temp$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+               temp$ReturnData$IRS990$GrossReceipts))
+}
+
+# Stop the clock
+proc.time() - ptm
+
+combined <- do.call(rbind.fill, lapply( paste0("url_", 1:n), get))
+
+```
+
+It takes about 0:49 to run the sequence for 100 observations. At this rate, it would take 27 hours to run all 203,074 observations through our code! In the interest of time, let's only evaluate pull 990 filings for those organizations listed in the Washington Post dataset of having reported material mistatements or diversions. http://www.washingtonpost.com/wp-srv/special/local/nonprofit-diversions-database/ 
+
+For code development and exploratory purposes only, we will subset the WaPo df to include only those organizations that reported material diversions in the 2010 tax year (and would therefore be included in the 2011 filings). We will then compare this list to the IRS index file for 2011, creating a new df with the 990 URLs for only these organizations.
+
+```{r}
+
+filingyear <- "2011"
+
+library(readr)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <- read_csv("~/Box Sync/Harvard University/Forensic Accounting and Fraud Examination/Research Paper/WaPo Dataset on Material Diversions Disclosed in 990.csv",
+                                                                 col_types = cols(`Revenue ` = col_number()))
+
+# Force WaPo df to uppercase text only (in order to merge later)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <-
+  mutate_all(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990, funs(toupper))
+
+# Rename Organization column in WaPo dataset to match the IRS index files (also required to merge).
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)
+names(irs2011)
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)[1] <- names(irs2011)[6]
+
+# Subset for filing year
+WaPo_subset <- subset(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990,
+                      WaPo_Dataset_on_Material_Diversions_Disclosed_in_990$`Tax Year ` == filingyear)
+
+diversionsonly_2011 <- merge(WaPo_subset, 
+                             irs2011, 
+                             by = "TAXPAYER_NAME")
+```
+
+The code above starts us on the right direction, but let's update the "hard coded" filing year to something  parameterized. Referencing the video tutorial at https://www.rstudio.com/resources/webinars/beyond-static-reports-with-r-markdown/. 
+
+Note: This code will only work if each of the IRS XML files have an identical (or nearly identical) return type. We will hardcode the return type to "990", but other possible options are 990EO, 990EZ, and 990O.
+  Note: If you change the return type, you will also need to change the XML path in the for-loop.
+
+```{r}
+
+library(readr)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <- read_csv("~/Box Sync/Harvard University/Forensic Accounting and Fraud Examination/Research Paper/WaPo Dataset on Material Diversions Disclosed in 990.csv",
+                                                                 col_types = cols(`Revenue ` = col_number()))
+
+# Force WaPo df to uppercase text only (in order to merge later)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <-
+  mutate_all(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990, funs(toupper))
+
+# Rename Organization column in WaPo dataset to match the IRS index files (also required to merge).
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)
+names(irs2011)
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)[1] <- names(irs2011)[6]
+
+# Subset WaPo for filing year
+WaPo_subset <- subset(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990,
+                      WaPo_Dataset_on_Material_Diversions_Disclosed_in_990$`Tax Year ` == params$filingyear)
+
+# Subset IRS for return type
+irs2011_subset <- subset(irs2011, 
+                         irs2011$RETURN_TYPE == "990")
+
+diversionsonly_2011 <- merge(WaPo_subset, 
+                             irs2011_subset, 
+                             by = "TAXPAYER_NAME")
+
+# Remove duplicate URLs
+diversionsonly_2011 <- 
+  diversionsonly_2011 %>%
+  distinct(URL)
+```
+
+Let's use this new, diversionsonly df to pull 990 data for only the "bad" nonprofits.
+
+```{r}
+
+n <- lengths(diversionsonly_2011)[1]
+# n <- 3
+
+# Start the clock
+ptm <- proc.time()
+
+for(i in 1:n){
+  temp <-
+    diversionsonly_2011$URL[i] %>% 
+    xmlParse() %>%
+    xmlToList()
+  assign(paste("url", i, sep = '_'), 
+    data.frame(temp$ReturnHeader$Filer$Name$BusinessNameLine1,
+               temp$ReturnData$IRS990$MaterialDiversionOrMisuse,
+               temp$ReturnData$IRS990$GrossReceipts))
+}
+
+# Stop the clock
+proc.time() - ptm
+
+diversioncombined_2011 <- do.call(rbind.fill, lapply( paste0("url_", 1:n), get))
+
+```
+
+Based on this output, we can see that many organizations that were cited by WaPo did not "check the box" for Material Diversion or Misuse. After further examining the WaPo dataset and supporting documentation for a random sampling of the organizations that they have identified, I feel comfortable with the ability for their dataset to identify "bad organizations". 
+
+Moving forward, we will combine WaPo's list of bad organizations with the code above in order to:
+
+* evaluate the impact of such material diversions on the firm's financial performance, and
+* develop a regression model to anticipate the likelihood of such diversions.
