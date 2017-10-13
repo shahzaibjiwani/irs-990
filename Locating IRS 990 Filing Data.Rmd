@@ -1,0 +1,129 @@
+---
+title: "Locating IRS 990 Filing Data"
+output: html_notebook
+---
+
+```{r include=FALSE}
+# Begin by loading the required packages.
+library(plyr)
+library(dplyr)
+library(rvest)
+library(RCurl)
+library(XML)
+```
+
+Begin by loading the required packages.
+
+The IRS recently published non-profit 990 submission data for 2011-2015. We will begin by drafing a script to download the following:
+
+1. The index file for each year that the IRS published the underlying 990 submission data. There is a unique index file for each year.
+
+```{r include=FALSE}
+irs2015 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2015.csv")
+irs2014 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2014.csv")
+irs2013 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2013.csv")
+irs2012 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2012.csv")
+irs2011 <- read.csv("https://s3.amazonaws.com/irs-form-990/index_2011.csv")
+```
+
+The 990 filing at a particular organization for a given year is available online (through AWS) as an XML file. This file can be downloaded by the public and only requires knowledge of the URL structure and the non-profit organization's unique filing identifier. The URL structure is published online (), and the unique identifier can be extracted from the index file. 
+
+Let's create two new columns within each index file. The first will contain the unique identifier, and the second will contain the URL for each organization's 990 filing for that year.
+
+```{r include=FALSE}
+irs2011$identifier <- paste0(
+  substr(irs2011$OBJECT_ID, 1, 15),
+  substr(irs2011$DLN, 11, 13)
+)
+
+irs2011$URL <- paste0("http://s3.amazonaws.com/irs-form-990/", irs2011$identifier, "_public.xml")
+```
+
+Let's begin by downloading the XML files for only the top 3 organizations in the 2011 index.
+
+Note: We want to save each of the XML files as a dataframe in order to view/edit/analyze them later. 
+
+```{r}
+
+threepre <- irs2011$URL[3] %>%
+      xmlParse() %>%
+      xmlToList()
+threepost <- data.frame(threepre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                threepre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                threepre$ReturnData$IRS990$GrossReceipts)
+names(threepost)[1] <- "MaterialDiversionOrMisuse"
+names(threepost)[2] <- "NameOfPrincipalOfficerPerson"
+names(threepost)[3] <- "GrossReceipts"
+
+onepre <- irs2011$URL[1] %>%
+      xmlParse() %>%
+      xmlToList()
+onepost <- data.frame(onepre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                onepre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                onepre$ReturnData$IRS990$GrossReceipts)
+names(onepost)[1] <- "MaterialDiversionOrMisuse"
+names(onepost)[2] <- "NameOfPrincipalOfficerPerson"
+names(onepost)[3] <- "GrossReceipts"
+
+twopre <- irs2011$URL[2] %>%
+      xmlParse() %>%
+      xmlToList()
+twopost <- data.frame(twopre$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+                twopre$ReturnData$IRS990$NameOfPrincipalOfficerPerson,
+                twopre$ReturnData$IRS990$GrossReceipts)
+names(twopost)[1] <- "MaterialDiversionOrMisuse"
+names(twopost)[2] <- "NameOfPrincipalOfficerPerson"
+names(twopost)[3] <- "GrossReceipts"
+
+combined <- rbind.fill(onepost, twopost, threepost)
+```
+
+This code works, but its not the most efficient. Let's try to use a for-loop instead of writing each version of code by hand.
+
+```{r}
+
+# n <- lengths(irs2011)[11]
+n <- 3
+
+for(i in 1:n){
+  temp <-
+    irs2011$URL[i] %>% 
+    xmlParse() %>%
+    xmlToList()
+  assign(paste("url", i, sep = '_'), 
+    data.frame(temp$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+               temp$ReturnData$IRS990$GrossReceipts))
+}
+
+combined <- do.call(rbind.fill, lapply( paste0("url_", 1:4), get))
+
+```
+
+Perfect. The combined output is as intended. Now, let's expand the dataset to include the first 100 observations to estimate the total time required for the entire project.
+
+```{r}
+
+# n <- lengths(irs2011)[11]
+n <- 100
+
+# Start the clock
+ptm <- proc.time()
+
+for(i in 1:n){
+  temp <-
+    irs2011$URL[i] %>% 
+    xmlParse() %>%
+    xmlToList()
+  assign(paste("url", i, sep = '_'), 
+    data.frame(temp$ReturnData$IRS990$MaterialDiversionOrMisuse, 
+               temp$ReturnData$IRS990$GrossReceipts))
+}
+
+# Stop the clock
+proc.time() - ptm
+
+combined <- do.call(rbind.fill, lapply( paste0("url_", 1:n), get))
+
+```
+
+It takes about 0:49 to run the sequence for 100 observations. At this rate, it would take 27 hours to run all 203,074 observations through our code!

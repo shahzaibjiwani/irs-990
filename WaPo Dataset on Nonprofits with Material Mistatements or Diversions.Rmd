@@ -1,0 +1,44 @@
+---
+title: "Importing WaPo Dataset on Nonprofits with Disclosed Material Mistatements or Diversions"
+output: html_notebook
+---
+
+```{r include=FALSE}
+# Begin by loading the required packages.
+library(plyr)
+library(dplyr)
+library(rvest)
+library(RCurl)
+library(XML)
+```
+
+In the interest of time, let's only evaluate pull 990 filings for those organizations listed in the Washington Post dataset of having reported material mistatements or diversions. http://www.washingtonpost.com/wp-srv/special/local/nonprofit-diversions-database/ 
+
+For code development and exploratory purposes only, we will subset the WaPo df to include only those organizations that reported material diversions in the 2010 tax year (and would therefore be included in the 2011 filings). We will then compare this list to the IRS index file for 2011, creating a new df with the 990 URLs for only these organizations.
+
+```{r}
+
+filingyear <- "2011"
+
+library(readr)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <- read_csv("~/Box Sync/Harvard University/Forensic Accounting and Fraud Examination/Research Paper/WaPo Dataset on Material Diversions Disclosed in 990.csv",
+                                                                 col_types = cols(`Revenue ` = col_number()))
+
+# Force WaPo df to uppercase text only (in order to merge later)
+WaPo_Dataset_on_Material_Diversions_Disclosed_in_990 <-
+  mutate_all(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990, funs(toupper))
+
+# Rename Organization column in WaPo dataset to match the IRS index files (also required to merge).
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)
+names(irs2011)
+names(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990)[1] <- names(irs2011)[6]
+
+# Subset for filing year
+WaPo_subset <- subset(WaPo_Dataset_on_Material_Diversions_Disclosed_in_990,
+                      WaPo_Dataset_on_Material_Diversions_Disclosed_in_990$`Tax Year ` == filingyear)
+
+diversionsonly_2011 <- merge(WaPo_subset, 
+                             irs2011, 
+                             by = "TAXPAYER_NAME")
+```
+
